@@ -185,6 +185,7 @@ where
         // wasn't yet initialized.
         // Or headers less than the best canonicalized
         if header.number < self.first_mmr_block || header.number <= self.best_canonicalized {
+            debug!(target: LOG_TARGET, "Skipping canonicalizing block {:?}", block_hash);
             return
         }
 
@@ -306,9 +307,36 @@ where
 
         // Move offchain MMR nodes for finalized blocks to canonical keys.
 
-        for hash in notification.tree_route.iter().chain(std::iter::once(&notification.hash)) {
-            self.canonicalize_branch(*hash);
+        if let Ok(Some(best_canonicalized_hash)) = self.client.hash(self.best_canonicalized) {
+            debug!(
+                target: LOG_TARGET,
+                "Best canonicalized hash {best_canonicalized_hash:?} , Finalized Hash {:?}",
+                notification.hash
+            );
+            if let Ok(tree_route) =
+                sp_blockchain::tree_route(&*self.client, best_canonicalized_hash, notification.hash)
+            {
+                debug!(
+                    target: LOG_TARGET,
+                    "Tree route {:?}",
+                    tree_route.enacted()
+                );
+                for item in tree_route.enacted() {
+                    self.canonicalize_branch(item.hash);
+                }
+            } else {
+                debug!(
+                    target: LOG_TARGET,
+                    "Couldn't canonicalize blocks, failed to construct finalized tree route"
+                );
+            }
+        } else {
+            debug!(
+                target: LOG_TARGET,
+                "Couldn't canonicalize blocks, failed to fetch hash of last canonicalized block"
+            );
         }
+
         self.write_gadget_state_or_log();
 
         // Remove offchain MMR nodes for stale forks.
